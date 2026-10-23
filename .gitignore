@@ -8,6 +8,7 @@
 *.pem
 *.key
 *.id_rsa
+backups/
 
 # Crash log files
 crash.log
