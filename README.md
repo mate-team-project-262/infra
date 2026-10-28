@@ -83,9 +83,9 @@ All external HTTP traffic enters exclusively through port `80` of **`moviematch_
 | Request Path | Target Upstream | Purpose |
 | :--- | :--- | :--- |
 | `/` | `http://moviematch_frontend:80` | Serves the React Single Page Application (SPA). |
-| `/api/*` | `http://moviematch_backend:8080` | Proxies REST API requests to the Spring Boot backend. |
-| `/swagger-ui/index.html` | `http://moviematch_backend:8080` | Exposes interactive OpenAPI / Swagger UI documentation. |
-| `/v3/api-docs` | `http://moviematch_backend:8080` | Serves raw OpenAPI 3.0 JSON specification for Swagger UI. |
+| `/api/*` | `http://moviematch_backend:8080/` | Proxies REST API requests to Spring Boot (strips `/api` prefix, e.g. `/api/rooms` $\rightarrow$ `/rooms`). |
+| `/swagger-ui/index.html` | `http://moviematch_backend:8080/swagger-ui/` | Exposes interactive OpenAPI / Swagger UI documentation. |
+| `/v3/api-docs` | `http://moviematch_backend:8080/v3/api-docs` | Serves raw OpenAPI 3.0 JSON specification for Swagger UI. |
 | `/gateway-health` | `moviematch_gateway` (internal) | Returns `200 OK` directly from Nginx for lightweight uptime checks. |
 
 ---
@@ -107,6 +107,17 @@ infra/
 ---
 
 ## 🚀 Full-Cycle Deployment & Verification Guide
+
+### 0. Build Application Images (Local Development Mode)
+Since CI/CD auto-publishing to GHCR is scheduled for Sprint 2 (T2-20), build the local container images from your respective repository roots before launching the compose stack:
+
+```bash
+# In the 'frontend' repository:
+docker build -t team262-frontend:local .
+
+# In the 'backend' repository:
+docker build -t team262-backend:local .
+```
 
 ### 1. Environment Preparation
 Clone the repository, switch to the `develop` branch, and initialize the environment variables file from the template:
@@ -141,10 +152,15 @@ curl -i http://localhost/gateway-health
 # 4. Verify Frontend SPA delivery
 curl -I http://localhost/
 
-# 5. Verify Backend Swagger OpenAPI spec routing through Gateway
+# 5. Verify Backend API routing & Room creation (POST /api/rooms -> 201 Created)
+curl -i -X POST http://localhost/api/rooms \
+  -H "Content-Type: application/json" \
+  -d '{"displayName": "DevOpsTest"}'
+
+# 6. Verify Backend Swagger OpenAPI spec routing through Gateway
 curl -s http://localhost/v3/api-docs | head -c 200
 
-# 6. Inspect container logs if troubleshooting is required
+# 7. Inspect container logs if troubleshooting is required
 docker compose logs -f moviematch_backend
 ```
 
