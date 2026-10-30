@@ -11,22 +11,24 @@ graph TB
     subgraph GitHub ["1. Source Control (GitHub Organization — Multi-Repo)"]
         FE_Repo["frontend repo<br/>(React SPA / Vite)"]
         BE_Repo["backend repo<br/>(Spring Boot 3.5 / Java 21 / Maven)"]
-        IN_Repo["infra repo<br/>(Docker Compose / Nginx / IaC)"]
+        IN_Repo["infra repo<br/>(Docker Compose / Nginx / Terraform IaC)"]
     end
 
     subgraph CICD ["2. CI/CD Automation (GitHub Actions)"]
         CI["CI Pipeline: ESLint, Vite Build,<br/>Maven Tests (H2 + Liquibase) & Docker Build"]
         GHCR[("GHCR<br/>GitHub Container Registry")]
-        CD["CD Pipeline: SSH Deploy"]
+        CD["CD Pipeline (on merge to main):<br/>Build, Push & SSH Deploy"]
     end
 
-    subgraph AWS ["3. Cloud Environment (AWS EC2 Free Tier — Ubuntu 24.04 LTS, 1GB RAM + 2GB Swap)"]
-        Nginx["moviematch_gateway<br/>Nginx 1.27-alpine Reverse Proxy (:80)"]
-        
-        subgraph DockerNet ["app-network (Isolated Docker Bridge Network)"]
-            FE_Cont["moviematch_frontend<br/>Nginx Static SPA (:80 | Limit: 64M)"]
-            BE_Cont["moviematch_backend<br/>Spring Boot API (:8080 | Limit: 450M)"]
-            DB_Cont[("moviematch_mysql<br/>MySQL 8.0 (:3306 | Limit: 256M)<br/>Volume: mysql_data")]
+    subgraph AWS ["3. Cloud Environment (AWS EC2 Free Tier — Ubuntu 22.04 LTS, 1GB RAM + 2GB Swap)"]
+        subgraph VPC ["Custom VPC (10.0.0.0/16) — Public Subnet (10.0.1.0/24) + Elastic IP"]
+            Nginx["moviematch_gateway<br/>Nginx 1.27-alpine Reverse Proxy (:80)"]
+
+            subgraph DockerNet ["app-network (Isolated Docker Bridge Network)"]
+                FE_Cont["moviematch_frontend<br/>Nginx Static SPA (:80 | Limit: 64M)"]
+                BE_Cont["moviematch_backend<br/>Spring Boot API (:8080 | Limit: 450M)"]
+                DB_Cont[("moviematch_mysql<br/>MySQL 8.0 (:3306 | Limit: 256M)<br/>Volume: mysql_data")]
+            end
         end
     end
 
@@ -61,9 +63,22 @@ The project follows a decoupled **Multi-Repo** architecture with strict branch p
 
 ---
 
+## ☁️ Cloud Infrastructure & IaC Architecture (Terraform)
+
+Cloud resources are provisioned in the `eu-central-1` (Frankfurt) region using **Terraform** (`>= 1.6.0`, AWS Provider `~> 5.0`):
+
+* **Networking:** Isolated custom **VPC** (`10.0.0.0/16`), **Public Subnet** (`10.0.1.0/24`), **Internet Gateway**, and explicit **Route Table**.
+* **Static Addressing:** Dedicated **AWS Elastic IP (EIP)** bound to the instance so the public IPv4 address remains persistent across reboots and CI/CD runs.
+* **Security Group (Stateful Firewall):** Restricts inbound traffic strictly to ports `22` (SSH), `80` (HTTP), and `443` (HTTPS).
+* **Compute & Storage Optimization:** `t3.micro` instance running official Canonical **Ubuntu 22.04 LTS (Jammy)** with an encrypted **20 GB `gp3` EBS root volume** (leaving 10 GB of the 30 GB AWS Free Tier limit reserved for a dedicated Monitoring VM).
+* **Instance Security (IMDSv2):** Enforces session-oriented Instance Metadata Service v2 (`http_tokens = "required"`, `hop_limit = 2` for containerized environments).
+* **Automated Host Bootstrapping (`cloud-init`):** Injects `scripts/bootstrap.sh` on first boot to configure a **2 GB Swap file** (`vm.swappiness=10`), install the official **Docker Engine & Compose plugin**, and enforce JSON log rotation (`max-size: 10m`, `max-file: 3`).
+
+---
+
 ## ⚙️ Production Stack & Memory Optimization (AWS Free Tier)
 
-To run reliably on an **AWS EC2 Free Tier** instance (`t2.micro` / `t3.micro` with **1 GB RAM** on Ubuntu 24.04 LTS) without triggering the Linux **OOM (Out-Of-Memory) Killer**, every container in `compose/docker-compose.yml` is governed by strict resource limits (`deploy.resources.limits.memory`):
+To run reliably on an **AWS EC2 Free Tier** instance (`t2.micro` / `t3.micro` with **1 GB RAM** on Ubuntu 22.04 LTS) without triggering the Linux **OOM (Out-Of-Memory) Killer**, every container in `compose/docker-compose.yml` is governed by strict resource limits (`deploy.resources.limits.memory`):
 
 | Container Name | Image / Stack | Internal Port | Host Port | Memory Limit | Key Engineering Decisions |
 | :--- | :--- | :---: | :---: | :---: | :--- |
@@ -99,14 +114,45 @@ infra/
 │   ├── .env.example             # Safe template for environment variables (committed to Git)
 │   └── nginx/
 │       └── nginx.conf           # Reverse-proxy routing & security headers (:ro mount)
-├── terraform/                   # IaC plans for AWS EC2, Security Groups, and networking
-├── scripts/                     # Server bootstrap (Swap, Docker) and DB backup scripts
+├── terraform/                   # AWS Cloud Infrastructure as Code (IaC)
+│   ├── main.tf                  # VPC, Subnet, IGW, Security Group, EIP, and EC2 resources
+│   ├── variables.tf             # Input variables (CIDRs, instance type, volume size, SSH key path)
+│   ├── outputs.tf               # Exported attributes (Elastic IP, DNS, SSH connection string)
+│   ├── providers.tf             # AWS provider version constraints & default resource tags
+│   └── .terraform.lock.hcl      # Cryptographic provider dependency lock file
+├── scripts/
+│   └── bootstrap.sh             # Cloud-init userdata script (2GB Swap, Docker Engine, log rotation)
 └── README.md                    # Architecture & operational documentation
 ```
 
 ---
 
 ## 🚀 Full-Cycle Deployment & Verification Guide
+
+### Phase 1: Provision AWS Cloud Infrastructure (Terraform)
+
+Ensure AWS CLI is configured with a non-root IAM user (`aws configure`) and an Ed25519 SSH key pair exists at `~/.ssh/id_ed25519.pub`:
+
+```bash
+cd terraform
+
+# 1. Initialize provider plugins and verify code formatting
+terraform init
+terraform fmt -check
+terraform validate
+
+# 2. Generate and apply a deterministic execution plan
+terraform plan -out=tfplan
+terraform apply "tfplan"
+rm -f tfplan
+
+# 3. Connect to the provisioned EC2 instance and verify cloud-init completion
+ssh -i ~/.ssh/id_ed25519 ubuntu@$(terraform output -raw public_ip)
+cloud-init status --wait
+free -h && docker --version && docker compose version
+```
+
+### Phase 2: Application Stack Deployment (Local / EC2)
 
 ### 0. Build Application Images (Local Development Mode)
 Since CI/CD auto-publishing to GHCR is scheduled for Sprint 2 (T2-20), build the local container images from your respective repository roots before launching the compose stack:
