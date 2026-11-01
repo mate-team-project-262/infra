@@ -156,3 +156,105 @@ resource "aws_eip" "app_eip" {
     Name = "${var.project_name}-eip"
   }
 }
+
+# Bind the Elastic IP to the EC2 instance
+resource "aws_eip_association" "eip_assoc" {
+  instance_id   = aws_instance.app_server.id
+  allocation_id = aws_eip.app_eip.id
+}
+
+# 5. Database Layer (Private Subnets, Security Group, Parameter Group & RDS)
+
+# Create 2 private subnets across different AZs (required for RDS Subnet Group)
+resource "aws_subnet" "private" {
+  count                   = 2
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.private_subnet_cidrs[count.index]
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "${var.project_name}-private-subnet-${count.index + 1}"
+  }
+}
+
+resource "aws_db_subnet_group" "rds_subnet_group" {
+  name       = "${var.project_name}-rds-subnet-group"
+  subnet_ids = aws_subnet.private[*].id
+
+  tags = {
+    Name = "${var.project_name}-rds-subnet-group"
+  }
+}
+
+# Allow port 3306 strictly from the EC2 application server Security Group
+resource "aws_security_group" "rds_sg" {
+  name        = "${var.project_name}-rds-sg"
+  description = "Allow MySQL inbound traffic strictly from EC2 web_sg"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "MySQL access from EC2 instance only"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.web_sg.id]
+  }
+
+  tags = {
+    Name = "${var.project_name}-rds-sg"
+  }
+}
+
+# Replicate docker-compose character-set and collation settings in AWS RDS
+resource "aws_db_parameter_group" "mysql_utf8mb4" {
+  name        = "${var.project_name}-mysql80-utf8mb4"
+  family      = "mysql8.0"
+  description = "Enforce utf8mb4 character set and unicode collation for TMDB movie data"
+
+  parameter {
+    name  = "character_set_server"
+    value = "utf8mb4"
+  }
+
+  parameter {
+    name  = "collation_server"
+    value = "utf8mb4_unicode_ci"
+  }
+}
+
+# AWS RDS MySQL 8.0 Instance (Free Tier eligible: Single-AZ, db.t3.micro, 20GB gp3)
+resource "aws_db_instance" "mysql" {
+  identifier            = "${var.project_name}-db"
+  engine                = "mysql"
+  engine_version        = "8.0"
+  instance_class        = "db.t3.micro"
+  allocated_storage     = 20
+  max_allocated_storage = 20 # Disable storage autoscaling to stay within 20GB Free Tier
+  storage_type          = "gp3"
+  storage_encrypted     = true
+
+  db_name  = var.mysql_database
+  username = var.mysql_user
+  password = var.mysql_password
+
+  parameter_group_name   = aws_db_parameter_group.mysql_utf8mb4.name
+  db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group.name
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+
+  # Strictly private and Single-AZ to avoid extra AWS charges
+  publicly_accessible = false
+  multi_az            = false
+
+  # Automated daily backups
+  backup_retention_period = 1
+  backup_window           = "03:00-04:00"
+  maintenance_window      = "Sun:04:00-Sun:05:00"
+
+  skip_final_snapshot = true
+  deletion_protection = false
+
+  tags = {
+    Name = "${var.project_name}-rds"
+  }
+}

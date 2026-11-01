@@ -1,59 +1,26 @@
 services:
-  # 1. Database Layer (Optimized for 1GB RAM AWS EC2)
-  mysql:
-    image: mysql:8.0
-    container_name: moviematch_mysql
-    restart: unless-stopped
-    command: >
-      --default-authentication-plugin=mysql_native_password
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
-      --performance_schema=OFF
-      --innodb_buffer_pool_size=64M
-    environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE in .env}
-      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in .env}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    networks:
-      - app-network
-
-  # 2. Application Layer (Spring Boot 3.5 + Java 21 JRE)
+  # 1. Application Layer (Spring Boot 3.5 + Java 21 JRE connected to AWS RDS)
   backend:
     image: ${BACKEND_IMAGE:-team262-backend:local}
     container_name: moviematch_backend
     restart: unless-stopped
-    depends_on:
-      mysql:
-        condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_HOST: ${MYSQL_HOST:?Set MYSQL_HOST (RDS endpoint) in .env}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE in .env}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in .env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
       ROOM_MAX_PARTICIPANTS: ${ROOM_MAX_PARTICIPANTS:-5}
       TMDB_BASE_URL: ${TMDB_BASE_URL:-https://api.themoviedb.org/3}
-      TMDB_API_KEY: ${TMDB_API_KEY:-placeholder_set_real_tmdb_key_in_env}
+      TMDB_API_KEY: ${TMDB_API_KEY:?Set TMDB_API_KEY in .env}
     deploy:
       resources:
         limits:
-          memory: 450M
+          memory: 700M
     networks:
       - app-network
 
-  # 3. Presentation Layer (React + Vite Static Nginx)
+  # 2. Presentation Layer (React + Vite Static Nginx)
   frontend:
     image: ${FRONTEND_IMAGE:-team262-frontend:local}
     container_name: moviematch_frontend
@@ -65,7 +32,7 @@ services:
     networks:
       - app-network
 
-  # 4. Edge Gateway / Reverse Proxy (Single Entry Point on Port 80)
+  # 3. Edge Gateway / Reverse Proxy (Single Entry Point on Port 80)
   gateway:
     image: nginx:1.27-alpine
     container_name: moviematch_gateway
@@ -77,16 +44,17 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/gateway-health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:
           memory: 64M
     networks:
       - app-network
-
-volumes:
-  mysql_data:
-    driver: local
 
 networks:
   app-network:

@@ -17,3 +17,13 @@ output "ssh_connection_command" {
   description = "Command to connect to the instance via SSH"
   value       = "ssh -i ~/.ssh/id_ed25519 ubuntu@${aws_eip.app_eip.public_ip}"
 }
+
+output "mysql_host" {
+  description = "RDS hostname without port (use this value for MYSQL_HOST in .env)"
+  value       = aws_db_instance.mysql.address
+}
+
+output "mysql_endpoint" {
+  description = "Full RDS connection endpoint (hostname:port)"
+  value       = aws_db_instance.mysql.endpoint
+}
