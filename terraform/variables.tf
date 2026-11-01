@@ -51,3 +51,27 @@ variable "root_volume_size" {
   type        = number
   default     = 20
 }
+
+variable "private_subnet_cidrs" {
+  description = "CIDR blocks for private RDS subnets across two Availability Zones"
+  type        = list(string)
+  default     = ["10.0.2.0/24", "10.0.3.0/24"]
+}
+
+variable "mysql_database" {
+  description = "Name of the MySQL database (maps to MYSQL_DATABASE in Spring Boot)"
+  type        = string
+  default     = "moviematch"
+}
+
+variable "mysql_user" {
+  description = "Master username for RDS MySQL (maps to MYSQL_USER in Spring Boot)"
+  type        = string
+  default     = "moviematch_admin"
+}
+
+variable "mysql_password" {
+  description = "Master password for RDS MySQL (injected via TF_VAR_mysql_password)"
+  type        = string
+  sensitive   = true
+}
