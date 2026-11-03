@@ -147,10 +147,9 @@ resource "aws_instance" "app_server" {
   }
 }
 
-# Allocate a static Elastic IP and associate it with the EC2 instance
+# Allocate a static Elastic IP (association is handled below by aws_eip_association)
 resource "aws_eip" "app_eip" {
-  instance = aws_instance.app_server.id
-  domain   = "vpc"
+  domain = "vpc"
 
   tags = {
     Name = "${var.project_name}-eip"
@@ -206,10 +205,10 @@ resource "aws_security_group" "rds_sg" {
   }
 }
 
-# Replicate docker-compose character-set and collation settings in AWS RDS
+# Replicate docker-compose character-set and collation settings in AWS RDS (MySQL 8.4 LTS)
 resource "aws_db_parameter_group" "mysql_utf8mb4" {
-  name        = "${var.project_name}-mysql80-utf8mb4"
-  family      = "mysql8.0"
+  name        = "${var.project_name}-mysql84-utf8mb4"
+  family      = "mysql8.4"
   description = "Enforce utf8mb4 character set and unicode collation for TMDB movie data"
 
   parameter {
@@ -221,18 +220,21 @@ resource "aws_db_parameter_group" "mysql_utf8mb4" {
     name  = "collation_server"
     value = "utf8mb4_unicode_ci"
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
-# AWS RDS MySQL 8.0 Instance (Free Tier eligible: Single-AZ, db.t3.micro, 20GB gp3)
+# AWS RDS MySQL 8.4 LTS Instance (Standard Support - no Extended Support charges)
 resource "aws_db_instance" "mysql" {
-  identifier            = "${var.project_name}-db"
-  engine                = "mysql"
-  engine_version        = "8.0"
-  instance_class        = "db.t3.micro"
-  allocated_storage     = 20
-  max_allocated_storage = 20 # Disable storage autoscaling to stay within 20GB Free Tier
-  storage_type          = "gp3"
-  storage_encrypted     = true
+  identifier        = "${var.project_name}-db"
+  engine            = "mysql"
+  engine_version    = "8.4"
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
+  storage_type      = "gp3"
+  storage_encrypted = true
 
   db_name  = var.mysql_database
   username = var.mysql_user
@@ -245,6 +247,10 @@ resource "aws_db_instance" "mysql" {
   # Strictly private and Single-AZ to avoid extra AWS charges
   publicly_accessible = false
   multi_az            = false
+
+  # Allow immediate in-place upgrade from 8.0 to 8.4 LTS
+  allow_major_version_upgrade = true
+  apply_immediately           = true
 
   # Automated daily backups
   backup_retention_period = 1
