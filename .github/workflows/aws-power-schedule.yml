@@ -1,0 +1,106 @@
+name: AWS Nightly Cost Saver (EC2 & RDS Schedule)
+
+on:
+  schedule:
+    # 20:00 UTC = 22:00 Kyiv Time (Winter EET, UTC+2) -> Stop EC2 and RDS
+    - cron: '0 20 * * *'
+    # 06:00 UTC = 08:00 Kyiv Time (Winter EET, UTC+2) -> Start RDS and EC2
+    - cron: '0 6 * * *'
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Select power action for AWS EC2 & RDS'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - status
+          - stop
+          - start
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  RDS_IDENTIFIER: team262-app-db
+  EC2_TAG_NAME: team262-app-ec2
+
+jobs:
+  manage-aws-power:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine Target Action
+        id: target
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ACTION=${{ inputs.action }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 20 * * *" ]; then
+            echo "ACTION=stop" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
+            echo "ACTION=start" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Execute AWS CLI Power Commands
+        run: |
+          set -euo pipefail
+          ACTION="${{ steps.target.outputs.ACTION }}"
+          echo "=== Executing power action: $ACTION ==="
+
+          EC2_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${EC2_TAG_NAME}" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+
+          if [ -z "$EC2_ID" ] || [ "$EC2_ID" = "None" ]; then
+            echo "ERROR: EC2 instance with tag Name=${EC2_TAG_NAME} not found!"
+            exit 1
+          fi
+
+          EC2_STATE=$(aws ec2 describe-instances --instance-ids "$EC2_ID" --query "Reservations[0].Instances[0].State.Name" --output text)
+          RDS_STATE=$(aws rds describe-db-instances --db-instance-identifier "$RDS_IDENTIFIER" --query "DBInstances[0].DBInstanceStatus" --output text)
+
+          echo "Current EC2 ($EC2_ID) state: $EC2_STATE"
+          echo "Current RDS ($RDS_IDENTIFIER) state: $RDS_STATE"
+
+          if [ "$ACTION" = "stop" ]; then
+            if [ "$EC2_STATE" = "running" ]; then
+              echo "Stopping EC2 instance $EC2_ID..."
+              aws ec2 stop-instances --instance-ids "$EC2_ID"
+              aws ec2 wait instance-stopped --instance-ids "$EC2_ID"
+              echo "EC2 stopped successfully."
+            fi
+
+            if [ "$RDS_STATE" = "available" ]; then
+              echo "Stopping RDS database $RDS_IDENTIFIER..."
+              aws rds stop-db-instance --db-instance-identifier "$RDS_IDENTIFIER"
+              echo "RDS stop command sent successfully."
+            fi
+
+          elif [ "$ACTION" = "start" ]; then
+            if [ "$RDS_STATE" = "stopped" ]; then
+              echo "Starting RDS database $RDS_IDENTIFIER..."
+              aws rds start-db-instance --db-instance-identifier "$RDS_IDENTIFIER"
+            fi
+
+            echo "Waiting for RDS ($RDS_IDENTIFIER) to become available before booting EC2..."
+            aws rds wait db-instance-available --db-instance-identifier "$RDS_IDENTIFIER"
+            echo "RDS is now AVAILABLE!"
+
+            if [ "$EC2_STATE" = "stopped" ]; then
+              echo "Starting EC2 instance $EC2_ID..."
+              aws ec2 start-instances --instance-ids "$EC2_ID"
+              aws ec2 wait instance-running --instance-ids "$EC2_ID"
+              echo "EC2 is now RUNNING!"
+            fi
+          fi
