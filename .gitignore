@@ -1,5 +1,7 @@
 # Local .terraform directories
 .terraform/
+tfplan
+*.tfplan
 
 # Environment files & Secrets
 .env
@@ -8,6 +10,7 @@
 *.pem
 *.key
 *.id_rsa
+backups/
 
 # Crash log files
 crash.log
@@ -30,7 +33,6 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-.terraform.lock.hcl
 
 # Ignore transient lock info files created by terraform apply
 .terraform.tfstate.lock.info
