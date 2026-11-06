@@ -46,6 +46,7 @@ services:
       MYSQL_USER: ${MYSQL_USER:-moviematch_admin}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
       ROOM_MAX_PARTICIPANTS: ${ROOM_MAX_PARTICIPANTS:-5}
+      TITLE_SOURCE: ${TITLE_SOURCE:-stub}
       TMDB_BASE_URL: ${TMDB_BASE_URL:-https://api.themoviedb.org/3}
       TMDB_API_KEY: ${TMDB_API_KEY:-placeholder_api_key}
     deploy:
