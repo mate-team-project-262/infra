@@ -83,8 +83,8 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost/gateway-health || exit 1"]
-      interval: 15s
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/gateway-health || exit 1"]
+      interval: 10s
       timeout: 5s
       retries: 3
     deploy:
