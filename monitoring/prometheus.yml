@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # 1. Monitor Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+
+  # 2. Scrape App EC2 Host Metrics (CPU, RAM, Disk, Network) over Private VPC
+  - job_name: 'app-ec2-node-exporter'
+    static_configs:
+      - targets: ['10.0.1.171:9100']
+        labels:
+          instance: 'moviematch-app-ec2'
+
+  # 3. Scrape Spring Boot Backend JVM & HikariCP MySQL Pool Metrics over Private VPC
+  - job_name: 'moviematch-backend-jvm'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['10.0.1.171:8080']
+        labels:
+          application: 'movie-match-backend'

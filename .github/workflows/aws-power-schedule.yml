@@ -2,10 +2,10 @@ name: AWS Nightly Cost Saver (EC2 & RDS Schedule)
 
 on:
   schedule:
-    # 20:00 UTC = 22:00 Kyiv Time (Winter EET, UTC+2) -> Stop EC2 and RDS
-    - cron: '0 20 * * *'
-    # 06:00 UTC = 08:00 Kyiv Time (Winter EET, UTC+2) -> Start RDS and EC2
-    - cron: '0 6 * * *'
+    # 19:47 UTC = 21:47 Kyiv Time (Winter EET, UTC+2) -> Stop EC2 and RDS
+    - cron: '47 19 * * *'
+    # 05:47 UTC = 07:47 Kyiv Time (Winter EET, UTC+2) -> Start RDS and EC2
+    - cron: '47 5 * * *'
 
   workflow_dispatch:
     inputs:
@@ -26,6 +26,7 @@ env:
   AWS_REGION: eu-central-1
   RDS_IDENTIFIER: team262-app-db
   EC2_TAG_NAME: team262-app-ec2
+  MON_EC2_TAG: team262-app-monitoring-ec2
 
 jobs:
   manage-aws-power:
@@ -45,40 +46,51 @@ jobs:
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "ACTION=${{ inputs.action }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 20 * * *" ]; then
-            echo "ACTION=stop" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
-            echo "ACTION=start" >> "$GITHUB_OUTPUT"
+          else
+            # Check real Kyiv hour to protect against extreme GitHub Actions schedule delays
+            KYIV_HOUR=$(TZ='Europe/Kyiv' date +%H)
+            echo "Current Kyiv Hour: $KYIV_HOUR"
+            if [ "$KYIV_HOUR" -ge 7 ] && [ "$KYIV_HOUR" -lt 20 ]; then
+              echo "ACTION=start" >> "$GITHUB_OUTPUT"
+            else
+              echo "ACTION=stop" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
-      - name: Execute AWS CLI Power Commands
+      - name: Execute AWS CLI Power Commands (App EC2, Monitoring EC2 & RDS)
         run: |
           set -euo pipefail
           ACTION="${{ steps.target.outputs.ACTION }}"
           echo "=== Executing power action: $ACTION ==="
 
-          EC2_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=${EC2_TAG_NAME}" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
-            --query "Reservations[0].Instances[0].InstanceId" \
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${APP_EC2_TAG},${MON_EC2_TAG}" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
+            --query "Reservations[].Instances[].InstanceId" \
             --output text)
 
-          if [ -z "$EC2_ID" ] || [ "$EC2_ID" = "None" ]; then
-            echo "ERROR: EC2 instance with tag Name=${EC2_TAG_NAME} not found!"
+          if [ -z "$INSTANCE_IDS" ] || [ "$INSTANCE_IDS" = "None" ]; then
+            echo "ERROR: No EC2 instances found with tags ${APP_EC2_TAG} or ${MON_EC2_TAG}!"
             exit 1
           fi
 
-          EC2_STATE=$(aws ec2 describe-instances --instance-ids "$EC2_ID" --query "Reservations[0].Instances[0].State.Name" --output text)
-          RDS_STATE=$(aws rds describe-db-instances --db-instance-identifier "$RDS_IDENTIFIER" --query "DBInstances[0].DBInstanceStatus" --output text)
+          echo "Found EC2 Instance IDs: $INSTANCE_IDS"
+          aws ec2 describe-instances --instance-ids $INSTANCE_IDS --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value|[0],InstanceId,State.Name]" --output table
 
-          echo "Current EC2 ($EC2_ID) state: $EC2_STATE"
+          RDS_STATE=$(aws rds describe-db-instances --db-instance-identifier "$RDS_IDENTIFIER" --query "DBInstances[0].DBInstanceStatus" --output text)
           echo "Current RDS ($RDS_IDENTIFIER) state: $RDS_STATE"
 
           if [ "$ACTION" = "stop" ]; then
-            if [ "$EC2_STATE" = "running" ]; then
-              echo "Stopping EC2 instance $EC2_ID..."
-              aws ec2 stop-instances --instance-ids "$EC2_ID"
-              aws ec2 wait instance-stopped --instance-ids "$EC2_ID"
-              echo "EC2 stopped successfully."
+            RUNNING_IDS=$(aws ec2 describe-instances \
+              --instance-ids $INSTANCE_IDS \
+              --filters "Name=instance-state-name,Values=running" \
+              --query "Reservations[].Instances[].InstanceId" \
+              --output text)
+
+            if [ -n "$RUNNING_IDS" ] && [ "$RUNNING_IDS" != "None" ]; then
+              echo "Stopping running EC2 instances: $RUNNING_IDS..."
+              aws ec2 stop-instances --instance-ids $RUNNING_IDS
+              aws ec2 wait instance-stopped --instance-ids $RUNNING_IDS
+              echo "All EC2 instances stopped successfully."
             fi
 
             if [ "$RDS_STATE" = "available" ]; then
@@ -97,10 +109,16 @@ jobs:
             aws rds wait db-instance-available --db-instance-identifier "$RDS_IDENTIFIER"
             echo "RDS is now AVAILABLE!"
 
-            if [ "$EC2_STATE" = "stopped" ]; then
-              echo "Starting EC2 instance $EC2_ID..."
-              aws ec2 start-instances --instance-ids "$EC2_ID"
-              aws ec2 wait instance-running --instance-ids "$EC2_ID"
-              echo "EC2 is now RUNNING!"
+            STOPPED_IDS=$(aws ec2 describe-instances \
+              --instance-ids $INSTANCE_IDS \
+              --filters "Name=instance-state-name,Values=stopped" \
+              --query "Reservations[].Instances[].InstanceId" \
+              --output text)
+
+            if [ -n "$STOPPED_IDS" ] && [ "$STOPPED_IDS" != "None" ]; then
+              echo "Starting stopped EC2 instances: $STOPPED_IDS..."
+              aws ec2 start-instances --instance-ids $STOPPED_IDS
+              aws ec2 wait instance-running --instance-ids $STOPPED_IDS
+              echo "All EC2 instances are now RUNNING!"
             fi
           fi
