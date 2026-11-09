@@ -1,0 +1,63 @@
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: monitoring_prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - monitoring-net
+
+  grafana:
+    image: grafana/grafana-oss:11.2.0
+    container_name: monitoring_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD is required}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - monitoring-net
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: monitoring_uptime_kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    networks:
+      - monitoring-net
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  uptime_kuma_data:
+
+networks:
+  monitoring-net:
+    driver: bridge
