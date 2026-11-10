@@ -2,15 +2,15 @@ name: AWS Nightly Cost Saver (EC2 & RDS Schedule)
 
 on:
   schedule:
-    # 19:47 UTC = 21:47 Kyiv Time (Winter EET, UTC+2) -> Stop EC2 and RDS
+    # 19:47 UTC = 21:47 Kyiv Time (Winter EET, UTC+2) -> Stop RDS and both EC2 instances
     - cron: '47 19 * * *'
-    # 05:47 UTC = 07:47 Kyiv Time (Winter EET, UTC+2) -> Start RDS and EC2
+    # 05:47 UTC = 07:47 Kyiv Time (Winter EET, UTC+2) -> Start RDS and both EC2 instances
     - cron: '47 5 * * *'
 
   workflow_dispatch:
     inputs:
       action:
-        description: 'Select power action for AWS EC2 & RDS'
+        description: 'Select power action for AWS EC2 (App + Monitoring) & RDS'
         required: true
         default: 'status'
         type: choice
@@ -25,7 +25,7 @@ permissions:
 env:
   AWS_REGION: eu-central-1
   RDS_IDENTIFIER: team262-app-db
-  EC2_TAG_NAME: team262-app-ec2
+  APP_EC2_TAG: team262-app-ec2
   MON_EC2_TAG: team262-app-monitoring-ec2
 
 jobs:
@@ -47,7 +47,6 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "ACTION=${{ inputs.action }}" >> "$GITHUB_OUTPUT"
           else
-            # Check real Kyiv hour to protect against extreme GitHub Actions schedule delays
             KYIV_HOUR=$(TZ='Europe/Kyiv' date +%H)
             echo "Current Kyiv Hour: $KYIV_HOUR"
             if [ "$KYIV_HOUR" -ge 7 ] && [ "$KYIV_HOUR" -lt 20 ]; then
