@@ -38,6 +38,8 @@ services:
     image: ${BACKEND_IMAGE:-team262-backend:local}
     container_name: moviematch_backend
     restart: unless-stopped
+    ports:
+      - "8080:8080"
     environment:
       # Defaults to 'mysql' container name for local profile, or reads AWS RDS host from .env
       MYSQL_HOST: ${MYSQL_HOST:-mysql}
@@ -45,14 +47,22 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-moviematch}
       MYSQL_USER: ${MYSQL_USER:-moviematch_admin}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-https://what2watch.duckdns.org,http://localhost:5173,http://localhost}
       ROOM_MAX_PARTICIPANTS: ${ROOM_MAX_PARTICIPANTS:-5}
       TITLE_SOURCE: ${TITLE_SOURCE:-stub}
       TMDB_BASE_URL: ${TMDB_BASE_URL:-https://api.themoviedb.org/3}
       TMDB_API_KEY: ${TMDB_API_KEY:-placeholder_api_key}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70.0 -XX:+UseG1GC"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/actuator/health || wget -q -O /dev/null http://127.0.0.1:8080/v3/api-docs || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     deploy:
       resources:
         limits:
-          memory: 700M
+          memory: 680M
     networks:
       - app-network
 
@@ -61,6 +71,11 @@ services:
     image: ${FRONTEND_IMAGE:-team262-frontend:local}
     container_name: moviematch_frontend
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:
@@ -80,7 +95,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/${NGINX_CONF_FILE:-nginx.conf}:/etc/nginx/conf.d/default.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/gateway-health || exit 1"]
@@ -91,6 +106,29 @@ services:
       resources:
         limits:
           memory: 64M
+    networks:
+      - app-network
+
+  # 5. Host Metrics Exporter (Scraped by Monitoring VM over Private VPC on port 9100)
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: moviematch_node_exporter
+    restart: unless-stopped
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    deploy:
+      resources:
+        limits:
+          memory: 32M
     networks:
       - app-network
 

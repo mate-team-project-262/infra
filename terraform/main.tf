@@ -264,3 +264,97 @@ resource "aws_db_instance" "mysql" {
     Name = "${var.project_name}-rds"
   }
 }
+
+# 6. Monitoring Layer (Dedicated Observability VM & Internal VPC Scraping Rules)
+
+resource "aws_security_group" "monitoring_sg" {
+  name        = "${var.project_name}-monitoring-sg"
+  description = "Allow SSH, Grafana (3000), and Uptime Kuma (3001) inbound traffic"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "SSH access"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = var.allowed_ssh_cidr
+  }
+
+  ingress {
+    description = "Grafana Web UI"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Uptime Kuma Web UI"
+    from_port   = 3001
+    to_port     = 3001
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-monitoring-sg"
+  }
+}
+
+# Allow Monitoring VM to scrape Node Exporter (9100) and Spring Actuator (8080) over Private VPC IP
+resource "aws_security_group_rule" "allow_node_exporter_from_monitoring" {
+  type                     = "ingress"
+  description              = "Allow Prometheus to scrape Node Exporter from Monitoring VM"
+  from_port                = 9100
+  to_port                  = 9100
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.web_sg.id
+  source_security_group_id = aws_security_group.monitoring_sg.id
+}
+
+resource "aws_security_group_rule" "allow_actuator_from_monitoring" {
+  type                     = "ingress"
+  description              = "Allow Prometheus to scrape Spring Boot Actuator from Monitoring VM"
+  from_port                = 8080
+  to_port                  = 8080
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.web_sg.id
+  source_security_group_id = aws_security_group.monitoring_sg.id
+}
+
+resource "aws_instance" "monitoring_server" {
+  ami                    = data.aws_ami.ubuntu_22_04.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.monitoring_sg.id]
+  key_name               = aws_key_pair.deployer.key_name
+
+  # Reuse standard Docker bootstrap script
+  user_data                   = file("${path.module}/../scripts/bootstrap.sh")
+  user_data_replace_on_change = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
+  root_block_device {
+    volume_size           = var.monitoring_volume_size
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-monitoring-ec2"
+  }
+}

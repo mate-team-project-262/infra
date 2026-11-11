@@ -1,0 +1,50 @@
+name: Infrastructure CI (Validate & Lint)
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate-iac:
+    name: Validate Terraform, Compose & Shell Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6.0"
+
+      - name: 3. Terraform Format & Validate
+        working-directory: ./terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: 4. Validate App Docker Compose Syntax
+        working-directory: ./compose
+        run: |
+          cp .env.example .env
+          docker compose config -q
+
+      - name: 5. Validate Monitoring Docker Compose Syntax
+        working-directory: ./monitoring
+        run: |
+          cp .env.example .env
+          docker compose config -q
+
+      - name: 6. Lint Bash Scripts with ShellCheck
+        run: |
+          shellcheck --severity=error scripts/*.sh

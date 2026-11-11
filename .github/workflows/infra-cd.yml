@@ -1,0 +1,111 @@
+name: Infrastructure CD (Sync & Reconcile EC2)
+
+on:
+  workflow_run:
+    workflows: ["Infrastructure CI (Validate & Lint)"]
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  EC2_USER: ubuntu
+  MON_EC2_TAG: team262-app-monitoring-ec2
+
+jobs:
+  deploy-infra:
+    name: Sync Configs to Production & Monitoring VMs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: 1. Configure AWS Credentials (for dynamic Monitoring VM IP lookup)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 2. Configure SSH Private Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
+
+      - name: 3. Sync & Reconcile Primary App EC2
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${{ env.EC2_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
+            set -Eeuo pipefail
+            echo "=== 1. Synchronizing infra repository (main branch) on App EC2 ==="
+            cd ~/infra
+            git fetch origin
+            git checkout main
+            git reset --hard origin/main
+            chmod +x ~/infra/scripts/*.sh
+
+            echo "=== 2. Reconciling Compose containers ==="
+            cd ~/infra/compose
+            docker compose up -d --remove-orphans
+
+            echo "=== 3. Zero-downtime Nginx configuration reload ==="
+            docker exec moviematch_gateway nginx -t
+            docker exec moviematch_gateway nginx -s reload
+
+            echo "=== 4. Polling real container health status ==="
+            for i in {1..15}; do
+              GW_STATUS=$(docker inspect --format='{{.State.Health.Status}}' moviematch_gateway)
+              if [ "$GW_STATUS" = "healthy" ]; then
+                echo "Gateway container is HEALTHY!"
+                break
+              fi
+              if [ "$i" -eq 15 ]; then
+                echo "ERROR: Gateway failed to become healthy in time!"
+                docker logs --tail 50 moviematch_gateway
+                exit 1
+              fi
+              echo "Waiting for gateway healthcheck... (attempt $i/15, current: $GW_STATUS)"
+              sleep 2
+            done
+
+            docker ps
+          EOF
+
+      - name: 4. Sync & Reconcile Monitoring EC2 (Dynamic IP Lookup)
+        run: |
+          MON_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${MON_EC2_TAG}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+
+          if [ -z "$MON_IP" ] || [ "$MON_IP" = "None" ]; then
+            echo "Monitoring VM is currently stopped or not found. Skipping monitoring sync."
+            exit 0
+          fi
+
+          echo "Found running Monitoring VM at $MON_IP. Syncing configurations..."
+          ssh-keyscan -H "$MON_IP" >> ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/id_ed25519 "${{ env.EC2_USER }}@${MON_IP}" << 'EOF'
+            set -Eeuo pipefail
+            cd ~/infra
+            git fetch origin
+            git checkout main
+            git reset --hard origin/main
+
+            cd ~/infra/monitoring
+            sed -i 's/__APP_PRIVATE_IP__/10.0.1.171/g' prometheus.yml
+            docker compose up -d --remove-orphans
+            docker compose ps
+          EOF
+
+      - name: 5. External Post-Deploy Smoke Check
+        run: |
+          curl -fsS --retry 3 --retry-delay 2 https://what2watch.duckdns.org/gateway-health
+          echo "Production Gateway smoke check PASSED!"

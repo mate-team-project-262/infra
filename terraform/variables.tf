@@ -75,3 +75,9 @@ variable "mysql_password" {
   type        = string
   sensitive   = true
 }
+
+variable "monitoring_volume_size" {
+  description = "Root EBS volume size for Monitoring VM in GB (20GB App + 10GB Monitoring = 30GB Free Tier)"
+  type        = number
+  default     = 10
+}
