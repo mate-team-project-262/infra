@@ -1,0 +1,48 @@
+groups:
+  - name: moviematch_backend_application_alerts
+    interval: 15s
+    rules:
+      # 1. Backend container or Spring Boot Actuator is unreachable
+      - alert: BackendDown
+        expr: up{job="moviematch_backend_jvm"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: moviematch-backend
+        annotations:
+          summary: "MovieMatch Backend JVM is DOWN ({{ $labels.instance }})"
+          description: "Prometheus cannot scrape /actuator/prometheus on {{ $labels.instance }} (job: moviematch_backend_jvm) for more than 1 minute."
+
+      # 2. JVM Heap memory usage exceeds 85%
+      - alert: HighJvmHeapUsage
+        expr: >
+          (
+            sum by (instance, application) (jvm_memory_used_bytes{job="moviematch_backend_jvm", area="heap"})
+            /
+            sum by (instance, application) (jvm_memory_max_bytes{job="moviematch_backend_jvm", area="heap"})
+          ) * 100 > 85
+        for: 2m
+        labels:
+          severity: warning
+          service: moviematch-backend
+        annotations:
+          summary: "High JVM Heap Usage on {{ $labels.instance }}"
+          description: "Spring Boot JVM Heap memory utilization is {{ $value | printf \"%.1f\" }}% (threshold > 85%) for 2 minutes. Risk of OOMKilled."
+
+      # 3. Elevated HTTP 5xx Server Error rate over 5 minutes
+      - alert: HighHttp5xxErrorRate
+        expr: >
+          (
+            sum by (instance, application) (rate(http_server_requests_seconds_count{job="moviematch_backend_jvm", status=~"5.."}[5m]))
+            /
+            clamp_min(sum by (instance, application) (rate(http_server_requests_seconds_count{job="moviematch_backend_jvm"}[5m])), 0.001)
+          ) * 100 > 5
+          and
+          sum by (instance, application) (increase(http_server_requests_seconds_count{job="moviematch_backend_jvm", status=~"5.."}[5m])) >= 3
+        for: 1m
+        labels:
+          severity: critical
+          service: moviematch-backend
+        annotations:
+          summary: "High HTTP 5xx Error Rate on MovieMatch Backend"
+          description: "{{ $value | printf \"%.1f\" }}% of HTTP requests returned 5xx server errors over the last 5m on {{ $labels.instance }}."
