@@ -114,6 +114,7 @@ services:
     image: prom/node-exporter:v1.8.2
     container_name: moviematch_node_exporter
     restart: unless-stopped
+    pid: "host"
     command:
       - '--path.procfs=/host/proc'
       - '--path.rootfs=/rootfs'
