@@ -1,11 +1,11 @@
 name: AWS Nightly Cost Saver (EC2 & RDS Schedule)
 
 on:
-  schedule:
+  # schedule:
     # 19:47 UTC = 21:47 Kyiv Time (Winter EET, UTC+2) -> Stop RDS and both EC2 instances
-    - cron: '47 19 * * *'
+    # - cron: '47 19 * * *'
     # 05:47 UTC = 07:47 Kyiv Time (Winter EET, UTC+2) -> Start RDS and both EC2 instances
-    - cron: '47 5 * * *'
+    # - cron: '47 5 * * *'
 
   workflow_dispatch:
     inputs:
