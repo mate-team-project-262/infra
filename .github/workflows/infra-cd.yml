@@ -102,6 +102,7 @@ jobs:
             cd ~/infra/monitoring
             sed -i 's/__APP_PRIVATE_IP__/10.0.1.171/g' prometheus.yml
             docker compose up -d --remove-orphans
+            docker compose restart prometheus
             docker compose ps
           EOF
 
