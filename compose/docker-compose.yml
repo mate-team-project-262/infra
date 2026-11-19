@@ -49,6 +49,15 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-https://what2watch.duckdns.org,http://localhost:5173,http://localhost}
       ROOM_MAX_PARTICIPANTS: ${ROOM_MAX_PARTICIPANTS:-5}
+      FRONTEND_URL: ${FRONTEND_URL:-https://what2watch.duckdns.org}
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-what2watch262@gmail.com}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_STARTTLS_ENABLED: ${MAIL_STARTTLS_ENABLED:-true}
+      MAIL_SSL_ENABLED: ${MAIL_SSL_ENABLED:-false}
       TITLE_SOURCE: ${TITLE_SOURCE:-stub}
       TMDB_BASE_URL: ${TMDB_BASE_URL:-https://api.themoviedb.org/3}
       TMDB_API_KEY: ${TMDB_API_KEY:-placeholder_api_key}
